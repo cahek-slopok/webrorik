@@ -126,9 +126,8 @@ func grow_maze(start_pos: Vector2i) -> void:
 	cells.append(start_pos)
 	
 	while cells.size() > 0:
-		# Always pick the NEWEST cell for twisty corridors.
-		# (If you wanted Prim's algorithm, you would change this to randi() % cells.size())
-		var index: int = cells.size() - 1 
+		# Pick a RANDOM cell for Prim's Algorithm (web-like, highly branching)
+		var index: int = randi() % cells.size() 
 		var cell: Vector2i = cells[index]
 		
 		var unmade_cells: Array[Vector2i] = []
@@ -213,9 +212,22 @@ func connect_regions() -> void:
 			doors_to_place = min(doors_to_place, valid_walls.size())
 			
 			for i in range(doors_to_place):
-				# Pick exactly one random coordinate from the chosen wall's array
-				var chosen_door: Vector2i = valid_walls[i].pick_random()
-				set_tile(chosen_door.x, chosen_door.y, TILE_DOOR)
+				# Shuffle the chosen wall's array so we still pick randomly
+				valid_walls[i].shuffle()
+				
+				# Try each potential door coordinate on this wall
+				for chosen_door in valid_walls[i]:
+					# Only place the door if it doesn't touch an existing door
+					if not has_adjacent_door(chosen_door):
+						set_tile(chosen_door.x, chosen_door.y, TILE_DOOR)
+						break # Stop searching and move to the next wall
+
+# Helper function to prevent adjacent doors
+func has_adjacent_door(pos: Vector2i) -> bool:
+	for dir in NEIGHBORS:
+		if get_tile(pos.x + dir.x, pos.y + dir.y) == TILE_DOOR:
+			return true
+	return false
 
 # Phase 5: Trim dead ends from the maze
 func remove_dead_ends() -> void:
