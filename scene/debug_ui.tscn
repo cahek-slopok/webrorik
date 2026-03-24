@@ -1,0 +1,22 @@
+[gd_scene load_steps=2 format=3 uid="uid://dhwqd1um5jp41"]
+
+[ext_resource type="FontFile" uid="uid://h1sdhmcvpvwi" path="res://font/BBTERMINAL.TTF" id="1_yeteb"]
+
+[node name="DebugUI" type="CanvasLayer"]
+
+[node name="ColorRect" type="ColorRect" parent="."]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0, 0, 0, 1)
+
+[node name="MapDisplay" type="RichTextLabel" parent="."]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_fonts/normal_font = ExtResource("1_yeteb")
+autowrap_mode = 0
