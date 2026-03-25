@@ -1,6 +1,6 @@
-[gd_scene load_steps=2 format=3 uid="uid://dhwqd1um5jp41"]
+[gd_scene format=3 uid="uid://dhwqd1um5jp41"]
 
-[ext_resource type="FontFile" uid="uid://h1sdhmcvpvwi" path="res://font/BBTERMINAL.TTF" id="1_yeteb"]
+[ext_resource type="FontFile" uid="uid://cbvmmgeuluk2q" path="res://font/square.ttf" id="1_yeteb"]
 
 [node name="DebugUI" type="CanvasLayer"]
 
