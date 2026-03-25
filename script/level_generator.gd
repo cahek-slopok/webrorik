@@ -5,7 +5,7 @@ const MAP_HEIGHT: int = 51
 
 const TILE_WALL: int = 35   # ASCII for '#'
 const TILE_FLOOR: int = 46  # ASCII for '.'
-const TILE_DOOR: int = 43   # ASCII for '+'
+const TILE_DOOR: int = 88   # ASCII for 'X'
 const TILE_VOID: int = 32   # ASCII for space ' '
 
 const DIRECTIONS: Array[Vector2i] = [
@@ -35,12 +35,30 @@ func _input(event: InputEvent) -> void:
 			get_tree().quit()
 
 func run_generation() -> void:
-	initialize_map()
-	generate_rooms(151, 15)
-	generate_mazes()
-	connect_regions()
-	remove_dead_ends()
-	remove_redundant_walls()
+	var max_attempts: int = 10
+	var attempts: int = 0
+	var is_valid: bool = false
+	
+	while attempts < max_attempts and not is_valid:
+		attempts += 1
+		initialize_map()
+		generate_rooms(151, 15)
+		generate_mazes()
+		connect_regions()
+		remove_dead_ends()
+		remove_redundant_walls()
+		
+		# Phase 7: Run the validator
+		is_valid = validate_dungeon()
+		
+		if not is_valid:
+			print("Validation failed on attempt %d." % attempts)
+			
+	if is_valid:
+		print("Dungeon ready in %d attempt(s)." % attempts)
+	else:
+		push_error("CRITICAL: Failed to generate a valid dungeon after %d attempts." % max_attempts)
+		
 	update_debug_ui()
 
 # Phase 1: Solid Canvas
@@ -130,57 +148,108 @@ func can_carve(pos: Vector2i) -> bool:
 		return false
 	return get_tile(pos.x, pos.y) == TILE_WALL
 
-# Phase 4: Room Connectivity
+# Phase 4: Room Connectivity and Optional Loops
 func connect_regions() -> void:
 	for room in rooms:
-		var top_doors: Array[Vector2i] = []
-		var bottom_doors: Array[Vector2i] = []
-		var left_doors: Array[Vector2i] = []
-		var right_doors: Array[Vector2i] = []
-		
+		var top_maze: Array[Vector2i] = []; var top_room: Array[Vector2i] = []
+		var bottom_maze: Array[Vector2i] = []; var bottom_room: Array[Vector2i] = []
+		var left_maze: Array[Vector2i] = []; var left_room: Array[Vector2i] = []
+		var right_maze: Array[Vector2i] = []; var right_room: Array[Vector2i] = []
+
 		var top_has_door: bool = false
 		var bottom_has_door: bool = false
 		var left_has_door: bool = false
 		var right_has_door: bool = false
-		
+
+		# Scan Top and Bottom
 		for x in range(room.position.x, room.position.x + room.size.x):
 			var top_y: int = room.position.y - 1
-			var bottom_y: int = room.position.y + room.size.y
-			
 			if get_tile(x, top_y) == TILE_DOOR: top_has_door = true
 			elif top_y - 1 > 0 and get_tile(x, top_y - 1) == TILE_FLOOR:
-				top_doors.append(Vector2i(x, top_y))
-				
+				# Use our new helper to distinguish the maze from other rooms
+				if is_in_room(x, top_y - 1): top_room.append(Vector2i(x, top_y))
+				else: top_maze.append(Vector2i(x, top_y))
+
+			var bottom_y: int = room.position.y + room.size.y
 			if get_tile(x, bottom_y) == TILE_DOOR: bottom_has_door = true
 			elif bottom_y + 1 < MAP_HEIGHT - 1 and get_tile(x, bottom_y + 1) == TILE_FLOOR:
-				bottom_doors.append(Vector2i(x, bottom_y))
-				
+				if is_in_room(x, bottom_y + 1): bottom_room.append(Vector2i(x, bottom_y))
+				else: bottom_maze.append(Vector2i(x, bottom_y))
+
+		# Scan Left and Right
 		for y in range(room.position.y, room.position.y + room.size.y):
 			var left_x: int = room.position.x - 1
-			var right_x: int = room.position.x + room.size.x
-			
 			if get_tile(left_x, y) == TILE_DOOR: left_has_door = true
 			elif left_x - 1 > 0 and get_tile(left_x - 1, y) == TILE_FLOOR:
-				left_doors.append(Vector2i(left_x, y))
-				
+				if is_in_room(left_x - 1, y): left_room.append(Vector2i(left_x, y))
+				else: left_maze.append(Vector2i(left_x, y))
+
+			var right_x: int = room.position.x + room.size.x
 			if get_tile(right_x, y) == TILE_DOOR: right_has_door = true
 			elif right_x + 1 < MAP_WIDTH - 1 and get_tile(right_x + 1, y) == TILE_FLOOR:
-				right_doors.append(Vector2i(right_x, y))
-		
-		var valid_walls: Array = []
-		if not top_has_door and top_doors.size() > 0: valid_walls.append(top_doors)
-		if not bottom_has_door and bottom_doors.size() > 0: valid_walls.append(bottom_doors)
-		if not left_has_door and left_doors.size() > 0: valid_walls.append(left_doors)
-		if not right_has_door and right_doors.size() > 0: valid_walls.append(right_doors)
-		
-		if valid_walls.size() > 0:
-			valid_walls.shuffle()
-			var doors_to_place: int = randi_range(1, 3) 
-			doors_to_place = min(doors_to_place, valid_walls.size())
-			
-			for i in range(doors_to_place):
-				valid_walls[i].shuffle()
-				for chosen_door in valid_walls[i]:
+				if is_in_room(right_x + 1, y): right_room.append(Vector2i(right_x, y))
+				else: right_maze.append(Vector2i(right_x, y))
+
+		# Package the maze-connected walls
+		var maze_walls: Array = []
+		if not top_has_door and top_maze.size() > 0: maze_walls.append({"array": top_maze, "dir": "top"})
+		if not bottom_has_door and bottom_maze.size() > 0: maze_walls.append({"array": bottom_maze, "dir": "bottom"})
+		if not left_has_door and left_maze.size() > 0: maze_walls.append({"array": left_maze, "dir": "left"})
+		if not right_has_door and right_maze.size() > 0: maze_walls.append({"array": right_maze, "dir": "right"})
+
+		var connected_to_maze: bool = false
+
+		# Step 1: Force exactly 1 connection to the global maze network
+		if maze_walls.size() > 0:
+			maze_walls.shuffle()
+			var primary: Dictionary = maze_walls[0]
+			var chosen_door: Vector2i = primary["array"].pick_random()
+			if not has_adjacent_door(chosen_door):
+				set_tile(chosen_door.x, chosen_door.y, TILE_DOOR)
+				connected_to_maze = true
+				if primary["dir"] == "top": top_has_door = true
+				if primary["dir"] == "bottom": bottom_has_door = true
+				if primary["dir"] == "left": left_has_door = true
+				if primary["dir"] == "right": right_has_door = true
+
+		# Step 2: Fallback - if landlocked, guarantee it connects to a neighboring room
+		if not connected_to_maze and not (top_has_door or bottom_has_door or left_has_door or right_has_door):
+			var room_walls: Array = []
+			if not top_has_door and top_room.size() > 0: room_walls.append({"array": top_room, "dir": "top"})
+			if not bottom_has_door and bottom_room.size() > 0: room_walls.append({"array": bottom_room, "dir": "bottom"})
+			if not left_has_door and left_room.size() > 0: room_walls.append({"array": left_room, "dir": "left"})
+			if not right_has_door and right_room.size() > 0: room_walls.append({"array": right_room, "dir": "right"})
+
+			if room_walls.size() > 0:
+				room_walls.shuffle()
+				var primary: Dictionary = room_walls[0]
+				var chosen_door: Vector2i = primary["array"].pick_random()
+				if not has_adjacent_door(chosen_door):
+					set_tile(chosen_door.x, chosen_door.y, TILE_DOOR)
+					if primary["dir"] == "top": top_has_door = true
+					if primary["dir"] == "bottom": bottom_has_door = true
+					if primary["dir"] == "left": left_has_door = true
+					if primary["dir"] == "right": right_has_door = true
+
+		# Step 3: Optional loops - Give all remaining walls a 15% chance to spawn an extra door
+		var extra_walls: Array = []
+		if not top_has_door:
+			var combined: Array = top_maze + top_room
+			if combined.size() > 0: extra_walls.append(combined)
+		if not bottom_has_door:
+			var combined: Array = bottom_maze + bottom_room
+			if combined.size() > 0: extra_walls.append(combined)
+		if not left_has_door:
+			var combined: Array = left_maze + left_room
+			if combined.size() > 0: extra_walls.append(combined)
+		if not right_has_door:
+			var combined: Array = right_maze + right_room
+			if combined.size() > 0: extra_walls.append(combined)
+
+		for wall_array in extra_walls:
+			if randf() < 0.15: 
+				wall_array.shuffle()
+				for chosen_door in wall_array:
 					if not has_adjacent_door(chosen_door):
 						set_tile(chosen_door.x, chosen_door.y, TILE_DOOR)
 						break
@@ -188,6 +257,14 @@ func connect_regions() -> void:
 func has_adjacent_door(pos: Vector2i) -> bool:
 	for dir in NEIGHBORS:
 		if get_tile(pos.x + dir.x, pos.y + dir.y) == TILE_DOOR:
+			return true
+	return false
+
+# Helper function: Instantly checks if a coordinate is inside a room
+func is_in_room(x: int, y: int) -> bool:
+	var pos := Vector2i(x, y)
+	for room in rooms:
+		if room.has_point(pos):
 			return true
 	return false
 
@@ -237,6 +314,54 @@ func has_adjacent_walkable(x: int, y: int) -> bool:
 				if tile == TILE_FLOOR or tile == TILE_DOOR:
 					return true
 	return false
+
+# Phase 7: Flood fill validation to ensure 100% room connectivity
+func validate_dungeon() -> bool:
+	if rooms.size() <= 1:
+		return true # A map with 0 or 1 room is tecrhnically always connected
+		
+	# Create a temporary array to track where our flood fill has reached
+	var visited: PackedByteArray = PackedByteArray()
+	visited.resize(MAP_WIDTH * MAP_HEIGHT)
+	visited.fill(0)
+	
+	# Start the flood fill from the center of the very first room
+	var start_pos: Vector2i = rooms[0].get_center()
+	var queue: Array[Vector2i] = [start_pos]
+	
+	# Mark the starting tile as visited (1)
+	visited[coords_to_index(start_pos.x, start_pos.y)] = 1
+	
+	# Pour through the dungeon map
+	while queue.size() > 0:
+		# Pop from the front to act as a Breadth-First Search (BFS)
+		var current: Vector2i = queue.pop_front()
+		
+		for dir in NEIGHBORS:
+			var next_pos: Vector2i = current + dir
+			var idx: int = coords_to_index(next_pos.x, next_pos.y)
+			
+			# Ensure we don't check outside the array bounds
+			if next_pos.x > 0 and next_pos.x < MAP_WIDTH - 1 and next_pos.y > 0 and next_pos.y < MAP_HEIGHT - 1:
+				# If we haven't visited this tile yet...
+				if visited[idx] == 0:
+					var tile: int = map_data[idx]
+					# ...and it is a walkable surface, spread the water to it
+					if tile == TILE_FLOOR or tile == TILE_DOOR:
+						visited[idx] = 1
+						queue.append(next_pos)
+						
+	# Once the flood fill is completely done, check every generated room
+	for room in rooms:
+		var room_center: Vector2i = room.get_center()
+		var center_idx: int = coords_to_index(room_center.x, room_center.y)
+		
+		# If the water never reached the center of this room, the dungeon is broken
+		if visited[center_idx] == 0:
+			return false
+			
+	# If we checked every room and they were all wet, the dungeon is fully connected!
+	return true
 
 # UI Updates: Memory-optimized PackedStringArrays and inlined math
 func update_debug_ui() -> void:
