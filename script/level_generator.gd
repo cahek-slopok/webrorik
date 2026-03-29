@@ -249,10 +249,10 @@ func remove_dead_ends() -> void:
 						if get_tile(x + dir.x, y + dir.y) == TILE_WALL:
 							adjacent_walls += 1
 					
+					# Unconditionally fill any tile surrounded by 3 walls
 					if adjacent_walls >= 3:
-						if current_tile == TILE_DOOR or randf() < 0.90:
-							set_tile(x, y, TILE_WALL, -1) # Clearing to wall removes region
-							done = false 
+						set_tile(x, y, TILE_WALL, -1)
+						done = false
 
 # Phase 6: Inlined Culling
 func remove_redundant_walls() -> void:
