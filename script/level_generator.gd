@@ -156,30 +156,46 @@ func can_carve(pos: Vector2i) -> bool:
 		return false
 	return get_tile(pos.x, pos.y) == TILE_WALL
 
-# Phase 4: Minimum Spanning Tree Connectivity (Strictly 1 door per pair)
+# Phase 4: Minimum Spanning Tree Connectivity (With Distance Rules & Maze Loops)
 func connect_regions() -> void:
 	var connectors: Array[Vector2i] = []
+	var internal_maze_walls: Array[Vector2i] = []
 	
-	# 1. Find all walls that sit between two DIFFERENT regions
+	# 1. Find all connection walls
 	for y in range(1, MAP_HEIGHT - 1):
 		for x in range(1, MAP_WIDTH - 1):
 			if get_tile(x, y) == TILE_WALL:
 				var touching: Array[int] = get_touching_regions(x, y)
+				
 				if touching.size() >= 2:
+					# Wall sits between two distinct regions
 					connectors.append(Vector2i(x, y))
+				elif touching.size() == 1:
+					# Wall sits between two tiles of the SAME region. 
+					# If it separates two floors, it's a parallel maze corridor.
+					var up: int = get_tile(x, y - 1)
+					var down: int = get_tile(x, y + 1)
+					var left: int = get_tile(x - 1, y)
+					var right: int = get_tile(x + 1, y)
 					
+					var horiz: bool = (left == TILE_FLOOR) and (right == TILE_FLOOR)
+					var vert: bool = (up == TILE_FLOOR) and (down == TILE_FLOOR)
+					
+					if horiz or vert:
+						internal_maze_walls.append(Vector2i(x, y))
+						
 	connectors.shuffle()
+	internal_maze_walls.shuffle()
 	
-	# 2. Setup Union-Find array to track merged networks
+	# 2. Setup Union-Find array
 	var merged: PackedInt32Array = PackedInt32Array()
 	merged.resize(current_region + 1)
 	for i in range(merged.size()):
 		merged[i] = i
 		
-	# NEW: A lightweight dictionary to track direct connections
-	var direct_connections: Dictionary = {}
-		
-	# 3. Merge the dungeon
+	var placed_doors: Array[Vector2i] = []
+	
+	# 3. Merge the distinct regions
 	for pos in connectors:
 		var touching: Array[int] = get_touching_regions(pos.x, pos.y)
 		if touching.size() < 2: continue 
@@ -190,23 +206,30 @@ func connect_regions() -> void:
 		var root1: int = find_root(r1, merged)
 		var root2: int = find_root(r2, merged)
 		
-		# Create a unique string key for this specific pair of regions (e.g., "3_7")
-		var pair_key: String = str(min(r1, r2)) + "_" + str(max(r1, r2))
-		
 		if root1 != root2:
-			# These regions are disconnected. Connect them!
+			# Essential structural connection
 			merged[root1] = root2
 			set_tile(pos.x, pos.y, TILE_DOOR) 
-			# Log that these two regions now share a direct door
-			direct_connections[pair_key] = true
+			placed_doors.append(pos)
 		else:
-			# These regions are in the same network.
-			# ONLY allow an extra loop door if they don't ALREADY share a direct door
-			if not direct_connections.has(pair_key):
-				# 4% chance to place an extra door to create a fun loop/flank route
-				if randf() < 0.04 and not has_adjacent_door(pos):
+			# Optional connection. 15% chance to create a loop into a room.
+			if randf() < 0.15 and not has_adjacent_door(pos):
+				var is_far: bool = true
+				for d in placed_doors:
+					# A 9-tile distance mathematically forces the door to the opposite wall
+					if pos.distance_to(d) < 9.0:
+						is_far = false
+						break
+				if is_far:
 					set_tile(pos.x, pos.y, TILE_DOOR)
-					direct_connections[pair_key] = true
+					placed_doors.append(pos)
+					
+	# 4. Create internal maze loops
+	for pos in internal_maze_walls:
+		# 4% chance to punch a hole between parallel maze corridors
+		if randf() < 0.04:
+			# We use TILE_FLOOR so we don't drop random doors in the middle of hallways
+			set_tile(pos.x, pos.y, TILE_FLOOR)
 
 func get_touching_regions(x: int, y: int) -> Array[int]:
 	var touching: Array[int] = []
