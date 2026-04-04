@@ -54,7 +54,7 @@ func run_generation() -> void:
 			print("Validation failed on attempt %d. Regenerating..." % attempts)
 			
 	if is_valid:
-		print("Dungeon successfully validated in %d attempt(s)." % attempts)
+		print("Dungeon ready in %d attempt(s)." % attempts)
 	else:
 		push_error("CRITICAL: Failed to generate a valid dungeon.")
 		
