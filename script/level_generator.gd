@@ -7,6 +7,13 @@ const TILE_WALL: int = 35   # ASCII for '#'
 const TILE_FLOOR: int = 46  # ASCII for '.'
 const TILE_DOOR: int = 88   # ASCII for 'X'
 const TILE_VOID: int = 32   # ASCII for space ' '
+const TILE_EXIT: int = 62    # ASCII for '>'
+const TILE_PLAYER: int = 64  # ASCII for '@'
+const TILE_AMMO: int = 65    # ASCII for 'A'
+const TILE_JUICE: int = 67   # ASCII for 'C'
+const TILE_SIZZLE: int = 83  # ASCII for 'S'
+const TILE_MALIBU: int = 77  # ASCII for 'M'
+const TILE_GOLD: int = 36    # ASCII for '$'
 
 const DIRECTIONS: Array[Vector2i] = [
 	Vector2i(0, -2), Vector2i(0, 2),
@@ -54,7 +61,8 @@ func run_generation() -> void:
 			print("Validation failed on attempt %d. Regenerating..." % attempts)
 			
 	if is_valid:
-		print("Dungeon ready in %d attempt(s)." % attempts)
+		print("Dungeon successfully validated in %d attempt(s)." % attempts)
+		spawn_entities() 
 	else:
 		push_error("CRITICAL: Failed to generate a valid dungeon.")
 		
@@ -360,6 +368,232 @@ func validate_dungeon() -> bool:
 			return false
 	return true
 
+# ==========================================
+# ENTITY SPAWNING PIPELINE
+# ==========================================
+
+func spawn_entities() -> void:
+	var analysis: Dictionary = analyze_dungeon()
+	# Opt 2: Direct assignment, no initial duplicate needed
+	var available_rooms: Array = analysis["rooms"] 
+	var map_center: Vector2i = analysis["map_center"]
+	
+	# Phase A: Player & Exit
+	available_rooms = spawn_phase_a_player_and_exit(available_rooms, map_center)
+	
+	# Phase B: Dispensers (Using columns)
+	# ... coming next
+	
+	# Phase C: Ammo Stashes
+	# ... coming next
+	
+	# Phase D: Gold
+	# ... coming next
+
+# Pre-requisite: Gather all structural data needed for intelligent placement
+func analyze_dungeon() -> Dictionary:
+	var map_center := Vector2i(MAP_WIDTH / 2, MAP_HEIGHT / 2) # Opt 11: Compute once
+	var room_data: Array = []
+	var columns: Array[Vector2i] = []
+	
+	# 1. Analyze Rooms (Opt 1: Struct-like array -> [Rect2i, Vector2i, dist_sq])
+	for room in rooms:
+		var center: Vector2i = room.get_center()
+		room_data.append([room, center, center.distance_squared_to(map_center)])
+		
+	# 2. Find Freestanding Columns
+	for y in range(2, MAP_HEIGHT - 2):
+		var row_base := y * MAP_WIDTH
+		for x in range(2, MAP_WIDTH - 2):
+			var idx := row_base + x
+			if map_data[idx] == TILE_WALL:
+				var w := MAP_WIDTH
+				
+				var up: int = map_data[idx - w]
+				var down: int = map_data[idx + w]
+				var left: int = map_data[idx - 1]
+				var right: int = map_data[idx + 1]
+				
+				# Opt 3: Fully inlined logic, 0 array allocations
+				if (up == TILE_FLOOR or up == TILE_DOOR) and \
+				   (down == TILE_FLOOR or down == TILE_DOOR) and \
+				   (left == TILE_FLOOR or left == TILE_DOOR) and \
+				   (right == TILE_FLOOR or right == TILE_DOOR):
+					columns.append(Vector2i(x, y))
+					
+	return {
+		"rooms": room_data,
+		"columns": columns,
+		"map_center": map_center
+	}
+
+# Phase A: Spawns the exit in the Upper half, Player in the Lower half
+func spawn_phase_a_player_and_exit(pool: Array, map_center: Vector2i) -> Array:
+	var upper_pool: Array = []
+	var lower_pool: Array = []
+	var center_y := map_center.y
+
+	for r in pool:
+		if r[1].y < center_y: # r[1] is the center Vector2i
+			upper_pool.append(r)
+		else:
+			lower_pool.append(r)
+
+	# Opt 2: Shallow copy only when fallback is triggered
+	if upper_pool.size() == 0: upper_pool = pool.duplicate(false)
+	if lower_pool.size() == 0: lower_pool = pool.duplicate(false)
+
+	var exit_pos := Vector2i(-1, -1)
+	var exit_data: Dictionary = place_void_entity(upper_pool, map_center, true)
+	
+	if exit_data.has("pos"):
+		exit_pos = exit_data["pos"]
+		map_data[exit_pos.y * MAP_WIDTH + exit_pos.x] = TILE_EXIT
+		fast_remove(pool, exit_data["room"])
+		fast_remove(lower_pool, exit_data["room"])
+
+	# Opt 9: Use squared distance for math ops
+	var min_sep_sq: float = (MAP_HEIGHT / 3.0) * (MAP_HEIGHT / 3.0)
+	var safe_lower_pool: Array = []
+	
+	if exit_pos != Vector2i(-1, -1):
+		for r in lower_pool:
+			if r[1].distance_squared_to(exit_pos) >= min_sep_sq:
+				safe_lower_pool.append(r)
+				
+	if safe_lower_pool.size() == 0:
+		safe_lower_pool = lower_pool
+
+	var player_data: Dictionary = place_void_entity(safe_lower_pool, map_center, false)
+	if player_data.has("pos"):
+		var p: Vector2i = player_data["pos"]
+		map_data[p.y * MAP_WIDTH + p.x] = TILE_PLAYER
+		fast_remove(pool, player_data["room"])
+
+	return pool
+
+# Helper 1: Evaluates rooms and executes outward-weighted random selection
+func place_void_entity(hemisphere_pool: Array, map_center: Vector2i, is_wall_entity: bool) -> Dictionary:
+	var valid_rooms: Array = []
+	var require_void: bool = true
+	var clearance: int = 2
+
+	while valid_rooms.size() == 0 and clearance >= 0:
+		for room in hemisphere_pool:
+			var spawns: Array[Vector2i] = get_valid_spawns(room, require_void, clearance, is_wall_entity)
+			if spawns.size() > 0:
+				valid_rooms.append([room, spawns, 0.0]) # Struct: [room_data, spawns, weight]
+				
+		if valid_rooms.size() == 0:
+			clearance -= 1
+			if clearance < 0 and require_void:
+				require_void = false
+				clearance = 2 
+
+	if valid_rooms.size() == 0:
+		return {}
+
+	var total_weight: float = 0.0
+	for vr in valid_rooms:
+		# Opt 8: Reuse the precomputed squared distance (vr[0][2]) instead of recalculating
+		var weight: float = vr[0][2] + 10.0 
+		vr[2] = weight
+		total_weight += weight
+
+	var roll: float = randf() * total_weight
+	var current: float = 0.0
+	var chosen_vr: Array = valid_rooms.back()
+
+	for vr in valid_rooms:
+		current += vr[2]
+		if roll <= current:
+			chosen_vr = vr
+			break
+
+	var spawns: Array[Vector2i] = chosen_vr[1]
+	# Opt 12: Direct index randomization avoids array .pick_random() overhead
+	return {"room": chosen_vr[0], "pos": spawns[randi() % spawns.size()]}
+
+# Helper 2: O(1) Array Removal (Opt 10)
+func fast_remove(arr: Array, item) -> void:
+	var i: int = arr.find(item)
+	if i != -1:
+		arr[i] = arr.back()
+		arr.pop_back()
+
+# Helper 3: Inlined, Zero-Allocation Edge Scanner (Opts 4, 5, 6, 13)
+func get_valid_spawns(room_data: Array, require_void: bool, clearance: int, is_wall: bool) -> Array[Vector2i]:
+	var rect: Rect2i = room_data[0]
+	var spawns: Array[Vector2i] = []
+	
+	var rx: int = rect.position.x
+	var ry: int = rect.position.y
+	var rw: int = rect.size.x
+	var rh: int = rect.size.y
+
+	# Top Edge
+	for x in range(rx + 1, rx + rw - 1):
+		var wy: int = ry - 1
+		if map_data[wy * MAP_WIDTH + x] == TILE_WALL:
+			var valid: bool = true
+			if require_void:
+				var vy: int = ry - 2
+				if vy < 0 or map_data[vy * MAP_WIDTH + x] != TILE_VOID:
+					valid = false
+			if valid and is_safe_distance_from_doors(x, ry, clearance):
+				spawns.append(Vector2i(x, wy) if is_wall else Vector2i(x, ry))
+				
+	# Bottom Edge
+	for x in range(rx + 1, rx + rw - 1):
+		var fy: int = ry + rh - 1
+		var wy: int = ry + rh
+		if map_data[wy * MAP_WIDTH + x] == TILE_WALL:
+			var valid: bool = true
+			if require_void:
+				var vy: int = ry + rh + 1
+				if vy >= MAP_HEIGHT or map_data[vy * MAP_WIDTH + x] != TILE_VOID:
+					valid = false
+			if valid and is_safe_distance_from_doors(x, fy, clearance):
+				spawns.append(Vector2i(x, wy) if is_wall else Vector2i(x, fy))
+
+	# Left Edge
+	for y in range(ry + 1, ry + rh - 1):
+		var wx: int = rx - 1
+		if map_data[y * MAP_WIDTH + wx] == TILE_WALL:
+			var valid: bool = true
+			if require_void:
+				var vx: int = rx - 2
+				if vx < 0 or map_data[y * MAP_WIDTH + vx] != TILE_VOID:
+					valid = false
+			if valid and is_safe_distance_from_doors(rx, y, clearance):
+				spawns.append(Vector2i(wx, y) if is_wall else Vector2i(rx, y))
+
+	# Right Edge
+	for y in range(ry + 1, ry + rh - 1):
+		var fx: int = rx + rw - 1
+		var wx: int = rx + rw
+		if map_data[y * MAP_WIDTH + wx] == TILE_WALL:
+			var valid: bool = true
+			if require_void:
+				var vx: int = rx + rw + 1
+				if vx >= MAP_WIDTH or map_data[y * MAP_WIDTH + vx] != TILE_VOID:
+					valid = false
+			if valid and is_safe_distance_from_doors(fx, y, clearance):
+				spawns.append(Vector2i(wx, y) if is_wall else Vector2i(fx, y))
+
+	return spawns
+
+# Helper 4: Radial Door Scanner
+func is_safe_distance_from_doors(pos_x: int, pos_y: int, min_dist: int) -> bool:
+	for dy in range(-min_dist, min_dist + 1):
+		for dx in range(-min_dist, min_dist + 1):
+			var check_x: int = pos_x + dx
+			var check_y: int = pos_y + dy
+			if check_x >= 0 and check_x < MAP_WIDTH and check_y >= 0 and check_y < MAP_HEIGHT:
+				if map_data[check_y * MAP_WIDTH + check_x] == TILE_DOOR:
+					return false
+	return true
+	
 # UI Updates
 func update_debug_ui() -> void:
 	if not map_display: return
@@ -389,7 +623,14 @@ func update_debug_ui() -> void:
 			elif tile == TILE_FLOOR: row_string += "."
 			elif tile == TILE_DOOR: row_string += "X"
 			elif tile == TILE_VOID: row_string += " "
-				
+			elif tile == TILE_EXIT: row_string += ">"
+			elif tile == TILE_PLAYER: row_string += "@"
+			elif tile == TILE_AMMO: row_string += "A"
+			elif tile == TILE_JUICE: row_string += "C"
+			elif tile == TILE_SIZZLE: row_string += "S"
+			elif tile == TILE_MALIBU: row_string += "M"
+			elif tile == TILE_GOLD: row_string += "$"
+
 		final_string += row_string + "\n"
 		
 	map_display.text = final_string
