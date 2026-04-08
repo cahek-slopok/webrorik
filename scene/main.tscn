@@ -13,5 +13,6 @@ map_display = NodePath("../DebugUI/MapDisplay")
 
 [node name="MapDisplay" parent="DebugUI" index="1"]
 theme_override_font_sizes/normal_font_size = 14
+bbcode_enabled = true
 
 [editable path="DebugUI"]

@@ -6,7 +6,7 @@ const MAP_HEIGHT: int = 51
 const TILE_WALL: int = 35   # ASCII for '#'
 const TILE_FLOOR: int = 46  # ASCII for '.'
 const TILE_DOOR: int = 88   # ASCII for 'X'
-const TILE_VOID: int = 32   # ASCII for space ' '
+const TILE_VOID: int = 32   # ASCII for ' '
 const TILE_EXIT: int = 62    # ASCII for '>'
 const TILE_PLAYER: int = 64  # ASCII for '@'
 const TILE_AMMO: int = 65    # ASCII for 'A'
@@ -381,8 +381,8 @@ func spawn_entities() -> void:
 	# Phase A: Player & Exit
 	available_rooms = spawn_phase_a_player_and_exit(available_rooms, map_center)
 	
-	# Phase B: Dispensers (Using columns)
-	# ... coming next
+	# Phase B (Gold heatmap)
+	spawn_phase_b_gold(available_rooms)
 	
 	# Phase C: Ammo Stashes
 	# ... coming next
@@ -594,15 +594,201 @@ func is_safe_distance_from_doors(pos_x: int, pos_y: int, min_dist: int) -> bool:
 					return false
 	return true
 	
+# Phase B: Traces the shortest path from Player to Exit and spawns gold based on distance
+func spawn_phase_b_gold(pool: Array) -> void:
+	# --- ADJUSTABLE PARAMETERS (Per-Tile Probability) ---
+	var base_tile_chance: float = 0.005 # 0.5% chance for a floor tile on the Golden Path
+	var max_tile_bonus: float = 0.045   # Up to +4.5% chance for the most remote tiles
+	# ----------------------------------------------------
+	
+	var total_tiles := MAP_WIDTH * MAP_HEIGHT
+	var w := MAP_WIDTH
+	
+	# --- 1. Find player & exit (fast, safe)
+	var p_idx := -1
+	var e_idx := -1
+	
+	for i in range(total_tiles):
+		var t := map_data[i]
+		if t == TILE_PLAYER:
+			p_idx = i
+		elif t == TILE_EXIT:
+			e_idx = i
+			
+	if p_idx == -1 or e_idx == -1:
+		push_error("Phase B Aborted: Missing Player or Exit.")
+		return
+	
+	# --- 2. BFS (single source)
+	var parents := PackedInt32Array()
+	parents.resize(total_tiles)
+	parents.fill(-1)
+	
+	var queue := PackedInt32Array()
+	queue.resize(total_tiles)
+	
+	var head := 0
+	var tail := 0
+	
+	queue[tail] = p_idx
+	tail += 1
+	parents[p_idx] = p_idx
+	
+	var found_exit := false
+	
+	while head < tail:
+		var curr := queue[head]
+		head += 1
+		
+		if curr == e_idx:
+			found_exit = true
+			break
+		
+		var x := curr % w
+		
+		# UP
+		var n := curr - w
+		if n >= 0 and parents[n] == -1:
+			var t := map_data[n]
+			if t == TILE_FLOOR or t == TILE_DOOR or t == TILE_EXIT:
+				parents[n] = curr
+				queue[tail] = n
+				tail += 1
+		
+		# DOWN
+		n = curr + w
+		if n < total_tiles and parents[n] == -1:
+			var t := map_data[n]
+			if t == TILE_FLOOR or t == TILE_DOOR or t == TILE_EXIT:
+				parents[n] = curr
+				queue[tail] = n
+				tail += 1
+		
+		# LEFT (prevent wrap)
+		if x > 0:
+			n = curr - 1
+			if parents[n] == -1:
+				var t := map_data[n]
+				if t == TILE_FLOOR or t == TILE_DOOR or t == TILE_EXIT:
+					parents[n] = curr
+					queue[tail] = n
+					tail += 1
+		
+		# RIGHT (prevent wrap)
+		if x < w - 1:
+			n = curr + 1
+			if parents[n] == -1:
+				var t := map_data[n]
+				if t == TILE_FLOOR or t == TILE_DOOR or t == TILE_EXIT:
+					parents[n] = curr
+					queue[tail] = n
+					tail += 1
+	
+	if not found_exit:
+		push_error("Phase B Aborted: No path to exit.")
+		return
+	
+	# --- 3. Reconstruct path (SAFE)
+	var path_indices := PackedInt32Array()
+	var curr_path := e_idx
+	
+	while curr_path != p_idx:
+		path_indices.append(curr_path)
+		curr_path = parents[curr_path]
+		
+		if curr_path == -1:
+			push_error("Phase B Aborted: Broken parent chain.")
+			return
+	
+	path_indices.append(p_idx)
+	
+	# --- 4. Multi-source BFS (distance field)
+	var dist_map := PackedInt32Array()
+	dist_map.resize(total_tiles)
+	dist_map.fill(-1)
+	
+	head = 0
+	tail = 0
+	
+	for p in path_indices:
+		queue[tail] = p
+		tail += 1
+		dist_map[p] = 0
+	
+	var max_dist := 1
+	
+	while head < tail:
+		var curr := queue[head]
+		head += 1
+		
+		var d := dist_map[curr]
+		var x := curr % w
+		
+		# UP
+		var n := curr - w
+		if n >= 0 and dist_map[n] == -1:
+			var t := map_data[n]
+			if t == TILE_FLOOR or t == TILE_DOOR or t == TILE_PLAYER or t == TILE_EXIT:
+				dist_map[n] = d + 1
+				queue[tail] = n
+				tail += 1
+				if d + 1 > max_dist: max_dist = d + 1
+		
+		# DOWN
+		n = curr + w
+		if n < total_tiles and dist_map[n] == -1:
+			var t := map_data[n]
+			if t == TILE_FLOOR or t == TILE_DOOR or t == TILE_PLAYER or t == TILE_EXIT:
+				dist_map[n] = d + 1
+				queue[tail] = n
+				tail += 1
+				if d + 1 > max_dist: max_dist = d + 1
+		
+		# LEFT
+		if x > 0:
+			n = curr - 1
+			if dist_map[n] == -1:
+				var t := map_data[n]
+				if t == TILE_FLOOR or t == TILE_DOOR or t == TILE_PLAYER or t == TILE_EXIT:
+					dist_map[n] = d + 1
+					queue[tail] = n
+					tail += 1
+					if d + 1 > max_dist: max_dist = d + 1
+		
+		# RIGHT
+		if x < w - 1:
+			n = curr + 1
+			if dist_map[n] == -1:
+				var t := map_data[n]
+				if t == TILE_FLOOR or t == TILE_DOOR or t == TILE_PLAYER or t == TILE_EXIT:
+					dist_map[n] = d + 1
+					queue[tail] = n
+					tail += 1
+					if d + 1 > max_dist: max_dist = d + 1
+	
+	# --- 5. Spawn gold (Organic Probability Field)
+	for i in range(total_tiles):
+		if map_data[i] == TILE_FLOOR:
+			var d := dist_map[i]
+			if d < 0: d = 0
+			
+			var dist_ratio := float(d) / float(max_dist)
+			var spawn_chance := base_tile_chance + (max_tile_bonus * dist_ratio)
+			
+			if randf() <= spawn_chance:
+				map_data[i] = TILE_GOLD
+	
 # UI Updates
 func update_debug_ui() -> void:
 	if not map_display: return
 		
-	var final_string: String = ""
+	# Use PackedStringArray to avoid massive memory reallocation during concatenation
+	var final_text := PackedStringArray()
 	
 	for y in range(MAP_HEIGHT):
-		var row_string: String = ""
+		var row_string := PackedStringArray()
 		var row_base := y * MAP_WIDTH
+		
 		for x in range(MAP_WIDTH):
 			var idx: int = row_base + x
 			var tile: int = map_data[idx]
@@ -616,21 +802,26 @@ func update_debug_ui() -> void:
 				var is_vertical: bool = up or down
 				var is_horizontal: bool = left or right
 				
-				if is_vertical and is_horizontal: row_string += "+"
-				elif is_vertical: row_string += "|"
-				elif is_horizontal: row_string += "-"
-				else: row_string += "#"
-			elif tile == TILE_FLOOR: row_string += "."
-			elif tile == TILE_DOOR: row_string += "X"
-			elif tile == TILE_VOID: row_string += " "
-			elif tile == TILE_EXIT: row_string += ">"
-			elif tile == TILE_PLAYER: row_string += "@"
-			elif tile == TILE_AMMO: row_string += "A"
-			elif tile == TILE_JUICE: row_string += "C"
-			elif tile == TILE_SIZZLE: row_string += "S"
-			elif tile == TILE_MALIBU: row_string += "M"
-			elif tile == TILE_GOLD: row_string += "$"
+				var char_str: String = "#"
+				if is_vertical and is_horizontal: char_str = "+"
+				elif is_vertical: char_str = "|"
+				elif is_horizontal: char_str = "-"
+				
+				row_string.append("[color=#888888]" + char_str + "[/color]") # Gray walls
+				
+			elif tile == TILE_FLOOR: row_string.append("[color=#444444].[/color]") # Dark gray floor
+			elif tile == TILE_DOOR: row_string.append("[color=#cd853f]X[/color]")  # Brown door
+			elif tile == TILE_VOID: row_string.append(" ")
+			elif tile == TILE_EXIT: row_string.append("[color=#ff00ff]>[/color]")  # Magenta exit
+			elif tile == TILE_PLAYER: row_string.append("[color=#00ff00]@[/color]") # Green player
+			elif tile == TILE_AMMO: row_string.append("[color=#ff4500]A[/color]")   # Orange-red ammo
+			elif tile == TILE_JUICE: row_string.append("[color=#ff8c00]C[/color]")  # Orange juice
+			elif tile == TILE_SIZZLE: row_string.append("[color=#00bfff]S[/color]") # Light blue sizzle
+			elif tile == TILE_MALIBU: row_string.append("[color=#ff1493]M[/color]") # Pink malibu
+			elif tile == TILE_GOLD: row_string.append("[color=#ffd700]$[/color]")   # Yellow gold
 
-		final_string += row_string + "\n"
+		# Join the row instantly, then add to final array
+		final_text.append("".join(row_string))
 		
-	map_display.text = final_string
+	# Join all rows with linebreaks instantly
+	map_display.text = "\n".join(final_text)
