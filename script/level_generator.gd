@@ -1,5 +1,15 @@
 extends Node
 
+@export_category("Gold Distribution")
+## Baseline chance for gold on the golden path.
+@export_range(0.0, 0.05, 0.001) var gold_base_chance: float = 0.005 
+## Maximum bonus chance added at the furthest tile.
+@export_range(0.0, 0.15, 0.001) var gold_max_bonus: float = 0.045
+## Percentage of the map distance (0.0 to 1.0) that receives zero bonus.
+@export_range(0.0, 1.0, 0.05) var gold_safe_zone: float = 0.20
+## 1.0 is linear. > 1.0 pushes gold further to the edges. < 1.0 pulls gold closer to the center.
+@export_range(0.1, 4.0, 0.1) var gold_curve_power: float = 1.0
+
 const MAP_WIDTH: int = 51
 const MAP_HEIGHT: int = 51
 
@@ -766,14 +776,24 @@ func spawn_phase_b_gold(pool: Array) -> void:
 					tail += 1
 					if d + 1 > max_dist: max_dist = d + 1
 	
-	# --- 5. Spawn gold (Organic Probability Field)
+# --- 5. Spawn gold (Organic Probability Field with Curve Shaping)
 	for i in range(total_tiles):
 		if map_data[i] == TILE_FLOOR:
 			var d := dist_map[i]
 			if d < 0: d = 0
 			
+			# Raw distance percentage (0.0 to 1.0)
 			var dist_ratio := float(d) / float(max_dist)
-			var spawn_chance := base_tile_chance + (max_tile_bonus * dist_ratio)
+			var active_ratio := 0.0
+			
+			# Only apply bonus if outside the safe zone
+			if dist_ratio > gold_safe_zone:
+				# Normalize the remaining distance back to a 0.0 - 1.0 scale
+				active_ratio = (dist_ratio - gold_safe_zone) / (1.0 - gold_safe_zone)
+				
+			# Apply exponential curve shaping
+			var shaped_ratio := pow(active_ratio, gold_curve_power)
+			var spawn_chance := gold_base_chance + (gold_max_bonus * shaped_ratio)
 			
 			if randf() <= spawn_chance:
 				map_data[i] = TILE_GOLD

@@ -7,6 +7,10 @@
 
 [node name="LevelGenerator" type="Node" parent="." unique_id=1689985587 node_paths=PackedStringArray("map_display")]
 script = ExtResource("1_itxqv")
+gold_base_chance = 0.007
+gold_max_bonus = 0.033
+gold_safe_zone = 0.1
+gold_curve_power = 0.7
 map_display = NodePath("../DebugUI/MapDisplay")
 
 [node name="DebugUI" parent="." unique_id=1184372423 instance=ExtResource("2_v0l8b")]
