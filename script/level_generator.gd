@@ -384,20 +384,22 @@ func validate_dungeon() -> bool:
 
 func spawn_entities() -> void:
 	var analysis: Dictionary = analyze_dungeon()
-	# Opt 2: Direct assignment, no initial duplicate needed
 	var available_rooms: Array = analysis["rooms"] 
 	var map_center: Vector2i = analysis["map_center"]
+	
+	# Extract the freestanding columns found during the pre-requisite scan
+	var columns: Array[Vector2i] = analysis["columns"] 
 	
 	# Phase A: Player & Exit
 	available_rooms = spawn_phase_a_player_and_exit(available_rooms, map_center)
 	
-	# Phase B (Gold heatmap)
+	# Phase B: Gold Spawns (The Golden Path)
 	spawn_phase_b_gold(available_rooms)
 	
-	# Phase C: Ammo Stashes
-	# ... coming next
+	# Phase C: Dispensers & Ammo
+	spawn_phase_c_dispensers(available_rooms, columns)
 	
-	# Phase D: Gold
+	# Phase D: Enemies
 	# ... coming next
 
 # Pre-requisite: Gather all structural data needed for intelligent placement
@@ -797,7 +799,114 @@ func spawn_phase_b_gold(pool: Array) -> void:
 			
 			if randf() <= spawn_chance:
 				map_data[i] = TILE_GOLD
+
+# Phase C: Distributes dispensers evenly, prioritizing columns then falling back to walls
+func spawn_phase_c_dispensers(pool: Array, columns: Array[Vector2i]) -> void:
+	# --- ADJUSTABLE PARAMETERS ---
+	var min_same_type_dist_sq: int = 100 # Keep identical dispensers at least 10 tiles apart (10^2)
+	# -----------------------------
 	
+	var roster: Array[int] = []
+	for i in range(randi_range(2, 3)): roster.append(TILE_JUICE)
+	for i in range(randi_range(1, 2)): roster.append(TILE_SIZZLE)
+	for i in range(randi_range(1, 2)): roster.append(TILE_AMMO)
+	for i in range(randi_range(0, 1)): roster.append(TILE_MALIBU)
+	
+	roster.shuffle()
+	
+	var placed_positions: Array[Vector2i] = []
+	var placed_types: Array[int] = []
+	var available_cols: Array[Vector2i] = columns.duplicate()
+	
+	# Priority 1: Expend available columns using Furthest Point Sampling
+	while roster.size() > 0 and available_cols.size() > 0:
+		var best_idx: int = get_furthest_candidate_index(available_cols, placed_positions)
+		var chosen_pos: Vector2i = available_cols[best_idx]
+		
+		# Smart pop an item that isn't too close to its twin
+		var d_type: int = pop_safe_dispenser(roster, chosen_pos, placed_positions, placed_types, min_same_type_dist_sq)
+		
+		map_data[chosen_pos.y * MAP_WIDTH + chosen_pos.x] = d_type
+		placed_positions.append(chosen_pos)
+		placed_types.append(d_type)
+		
+		available_cols[best_idx] = available_cols[available_cols.size() - 1]
+		available_cols.pop_back()
+		
+	# Priority 2: Fallback to room walls
+	if roster.size() > 0:
+		var valid_walls: Array[Vector2i] = []
+		for r in pool:
+			var spawns: Array[Vector2i] = get_valid_spawns(r, false, 1, true)
+			valid_walls.append_array(spawns)
+			
+		while roster.size() > 0 and valid_walls.size() > 0:
+			var best_idx: int = get_furthest_candidate_index(valid_walls, placed_positions)
+			var chosen_pos: Vector2i = valid_walls[best_idx]
+			
+			var d_type: int = pop_safe_dispenser(roster, chosen_pos, placed_positions, placed_types, min_same_type_dist_sq)
+			
+			map_data[chosen_pos.y * MAP_WIDTH + chosen_pos.x] = d_type
+			placed_positions.append(chosen_pos)
+			placed_types.append(d_type)
+			
+			valid_walls[best_idx] = valid_walls[valid_walls.size() - 1]
+			valid_walls.pop_back()
+
+# Helper: Executes max-min distance calculation for even distribution
+func get_furthest_candidate_index(candidates: Array[Vector2i], placed: Array[Vector2i]) -> int:
+	if placed.size() == 0:
+		return randi() % candidates.size()
+		
+	var best_idx: int = -1
+	var max_min_dist_sq: float = -1.0
+	
+	# For every candidate, find its distance to the *closest* placed entity
+	for i in range(candidates.size()):
+		var c: Vector2i = candidates[i]
+		var min_dist_sq: float = 1e9 # Arbitrary huge number
+		
+		for p in placed:
+			var d_sq: float = c.distance_squared_to(p)
+			if d_sq < min_dist_sq:
+				min_dist_sq = d_sq
+				
+		# We want the candidate whose closest neighbor is as far away as possible
+		if min_dist_sq > max_min_dist_sq:
+			max_min_dist_sq = min_dist_sq
+			best_idx = i
+			
+	return best_idx
+
+# Helper: Extracts a dispenser type from the roster that isn't too close to its twins
+func pop_safe_dispenser(roster: Array[int], chosen_pos: Vector2i, placed_pos: Array[Vector2i], placed_types: Array[int], min_dist_sq: int) -> int:
+	var chosen_idx: int = roster.size() - 1
+	
+	# Scan the roster backwards to find a valid, isolated candidate type
+	for i in range(roster.size() - 1, -1, -1):
+		var candidate: int = roster[i]
+		var is_safe: bool = true
+		
+		# Check if this type exists nearby in the already placed list
+		for p_idx in range(placed_pos.size()):
+			if placed_types[p_idx] == candidate:
+				if chosen_pos.distance_squared_to(placed_pos[p_idx]) < min_dist_sq:
+					is_safe = false
+					break
+					
+		if is_safe:
+			chosen_idx = i
+			break
+			
+	# If no safe type exists (map is tiny), gracefully fallback to the default pick
+	var chosen_type: int = roster[chosen_idx]
+	
+	# O(1) array removal
+	roster[chosen_idx] = roster[roster.size() - 1]
+	roster.pop_back()
+	
+	return chosen_type
+
 # UI Updates
 func update_debug_ui() -> void:
 	if not map_display: return

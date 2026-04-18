@@ -1,0 +1,22 @@
+[gd_scene format=3 uid="uid://dbw5pk62a22tl"]
+
+[ext_resource type="Script" uid="uid://bjc7db1xa725y" path="res://script/level_generator.gd" id="1_itxqv"]
+[ext_resource type="PackedScene" uid="uid://dhwqd1um5jp41" path="res://scene/debug_ui.tscn" id="2_v0l8b"]
+
+[node name="main" type="Node3D" unique_id=1600493917]
+
+[node name="LevelGenerator" type="Node" parent="." unique_id=1689985587 node_paths=PackedStringArray("map_display")]
+script = ExtResource("1_itxqv")
+gold_base_chance = 0.007
+gold_max_bonus = 0.033
+gold_safe_zone = 0.1
+gold_curve_power = 0.7
+map_display = NodePath("../DebugUI/MapDisplay")
+
+[node name="DebugUI" parent="." unique_id=1184372423 instance=ExtResource("2_v0l8b")]
+
+[node name="MapDisplay" parent="DebugUI" index="1"]
+theme_override_font_sizes/normal_font_size = 14
+bbcode_enabled = true
+
+[editable path="DebugUI"]
