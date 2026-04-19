@@ -803,7 +803,7 @@ func spawn_phase_b_gold(pool: Array) -> void:
 # Phase C: Distributes dispensers evenly, prioritizing columns then falling back to walls
 func spawn_phase_c_dispensers(pool: Array, columns: Array[Vector2i]) -> void:
 	# --- ADJUSTABLE PARAMETERS ---
-	var min_same_type_dist_sq: int = 100 # Keep identical dispensers at least 10 tiles apart (10^2)
+	var min_same_type_dist_sq: int = 420 # Keep identical dispensers at least 10 tiles apart (10^2)
 	# -----------------------------
 	
 	var roster: Array[int] = []
